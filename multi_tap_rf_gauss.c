@@ -1,7 +1,9 @@
 /******************************************************************
 *
 *  modified from multi_tap_spec.c
-*  callate rrf, RCor
+*  calculate rrf, RCor
+*  
+*  add gauss window to Z and R spectra before calculate RF spectra 
 *  @author liwentao
 *******************************************************************/
 #include "jl.h"
@@ -30,6 +32,14 @@ void time_shift(int M0, float *dataf, int klen){
                 (float)sin((double) omega*M0)*dataf[jje];
         dataf[jje]=temp;
     }
+
+}
+
+float gauss_window(float omiga, float alpha){
+    float gauss_win;
+    gauss_win=-omiga*omiga/(4.*alpha*alpha);
+    gauss_win=(float) exp((double)gauss_win);
+    return gauss_win;
 
 }
 /*---------------------------------------------------------------------------*/
@@ -69,9 +79,9 @@ void mt_get_spec(float *series, int inum, int klength, float *amp)
 
 /*------------------------------------------------------------------------------*/
 
-void do_mtap_rf(float *dataz, float *datar, int npts,
+void do_mtap_rf_gauss(float *dataz, float *datar, int npts,
 	    int nwin, float npi, float dt, float t0, float *rrf,  \
-        float *rcorr, int klen, float *noise)
+        float *rcorr, int klen, float *noise, float gauss)
 {
 /*
 input:
@@ -102,12 +112,13 @@ notice:
     float          amp_noise,domi;
     float          *dataz_tap, *datar_tap, *noise_tap;
 float          *nnn,*zzz, *rrr, *rcorr2;
+    float          omiga,window,df=1/dt/klen;
+    float          water=0.001;
 	/************/
     int             num_freqs;
     int             len_taps, num_freq_tap,num_freq_fft;
 	int             kf;
    /**************/ 
-
 
 #ifdef SAVEAMP
 extern SACHEAD HD;
@@ -118,6 +129,7 @@ strcpy(sacout2,SAVE);strcat(sacout2,".zsig.amp");
 strcpy(sacout3,SAVE);strcat(sacout3,".rsig.amp");
 strcpy(sacout4,SAVE);strcat(sacout4,".rcorr2.amp");
 #endif
+
 /*check discretize to to M0, make sure M0=2*j
 */
    M0=t0/dt;
@@ -182,6 +194,8 @@ rcorr2=(float *)malloc((size_t)klen/2*sizeof(float));
     for(i=1;i<klen/2;++i){
         rrf[2*i] = 0;
         rrf[2*i+1] = 0;
+        omiga=2.*PI*i*df;
+        window=gauss_window(omiga,gauss);
         amp_noise = ampn[2*i]*ampn[2*i]+ampn[2*i+1]*ampn[2*i+1];
 
         /*amp_noise = (float) sqrt((double) amp_noise) ;*/
@@ -195,8 +209,7 @@ rcorr2=(float *)malloc((size_t)klen/2*sizeof(float));
             amprr += ampr[jo]*ampr[jo] + ampr[je]*ampr[je];
             /*R receiver function*/
             rrf[2*i] += ampr[je]*ampz[je] + ampr[jo]*ampz[jo];
-            rrf[2*i+1] += ampr[jo]*ampz[je] - ampr[je]*ampz[jo];
-          
+            rrf[2*i+1] += ampr[jo]*ampz[je] - ampr[je]*ampz[jo];  
         }
 
 //rfff[i]=rrf[2*i]*rrf[2*i]+rrf[2*i+1]*rrf[2*i+1];
@@ -210,14 +223,20 @@ zzz[i]=ampzz;
 rrr[i]=amprr;
 nnn[i]=amp_noise;
 rcorr2[i]=rcorr[2*i]*rcorr[2*i]+rcorr[2*i+1]*rcorr[2*i+1];
-#endif
+#endif        
+        // rrf[2*i]*=window;
+        // rrf[2*i+1]*=window;
           domi = ampzz + amp_noise;
-        rrf[2*i] = rrf[2*i]/domi;
-        rrf[2*i+1] = rrf[2*i+1]/domi;
+        // domi*=window;
+        domi = (domi<=water) ? water : domi;
+        rrf[2*i] = rrf[2*i]/domi*window;
+        rrf[2*i+1] = rrf[2*i+1]/domi*window;
     }
         /*for i=0,1 responding to f=0,1/(2dt) ,the imaginary part is zero*/
     for (i=0;i<2;++i){
         rrf[i] = 0;
+        omiga=2*PI*df*((i==0)?0:klen/2);
+        window=gauss_window(omiga,gauss);
         amp_noise = noise[i]*noise[i];
         /*amp_noise = (float) sqrt((double) amp_noise) ;*/
 
@@ -241,9 +260,11 @@ if (i==0){
     rcorr2[i]=rcorr[i]*rcorr[i];
 }
 #endif
-
+    //*rrf[i]*=window;
           domi = ampzz + amp_noise;
-        rrf[i] = rrf[i]/domi;
+    //    domi*=window;
+        domi = (domi<=water) ? water : domi;
+        rrf[i] = rrf[i]/domi*window;
         
     }
 #ifdef SAVEAMP
